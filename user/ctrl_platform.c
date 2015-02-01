@@ -595,9 +595,11 @@ void ICACHE_FLASH_ATTR ctrl_platform_init(void)
 	load_flash_param(ESP_PARAM_SAVE_1, (uint32 *)&ctrlSetup, sizeof(tCtrlSetup));
 	wifi_station_get_config(&stationConf);
 
+	gpio_init(); // added on 30/1/2015
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2);
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0);
-	gpio_output_set(0, 0, (1<<LED_STATUS_GPIO), (1<<LED_STATUS_GPIO));
+	//gpio_output_set(0, 0, (1<<LED_STATUS_GPIO), (1<<LED_STATUS_GPIO)); // commented on 30/1/2015
+	gpio_output_set(0, (1<<LED_STATUS_GPIO), (1<<LED_STATUS_GPIO), 0); // added on 30/1/2015
 
 	// taken from eshttpd of Sprite_tm, file: io.c
 	os_timer_disarm(&tmrConfigChecker);
@@ -692,8 +694,8 @@ void ICACHE_FLASH_ATTR ctrl_platform_init(void)
 			uart0_sendStr(temp);
 			//os_sprintf(temp, "SSID: %s\r\n", stationConf.ssid);
 			//uart0_sendStr(temp);
-			os_sprintf(temp, "PWD: %s\r\n", stationConf.password);
-			uart0_sendStr(temp);
+			//os_sprintf(temp, "PWD: %s\r\n", stationConf.password);
+			//uart0_sendStr(temp);
 		#endif
 
 		// Init the database (a RAM version of DB for now)

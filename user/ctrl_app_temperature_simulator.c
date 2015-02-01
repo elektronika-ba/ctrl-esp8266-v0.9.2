@@ -1,3 +1,4 @@
+/*
 #include "ets_sys.h"
 #include "osapi.h"
 #include "user_interface.h"
@@ -56,3 +57,4 @@ void ICACHE_FLASH_ATTR ctrl_app_init(tCtrlAppCallbacks *ctrlAppCallbacks)
 	os_timer_setfn(&tmr, (os_timer_func_t *)ctrl_app_temperature_simulator_simulate, NULL);
 	os_timer_arm(&tmr, 5000, 1); // 1 = repeat automatically
 }
+*/
