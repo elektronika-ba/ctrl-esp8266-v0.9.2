@@ -32,7 +32,7 @@ static unsigned char ICACHE_FLASH_ATTR ctrl_app_message_received(tCtrlMessage *m
 {
 	// my custom app receives a MSG!
 
-	uart0_sendStr("APP GOT NEW MSG: ");
+	uart0_sendStr("APP MSG:");
 
 	unsigned short i;
 	for(i=0; i<msg->length-1-4; i++)

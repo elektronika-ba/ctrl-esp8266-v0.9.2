@@ -33,9 +33,9 @@ static unsigned short ICACHE_FLASH_ATTR ctrl_find_message(char *data, unsigned s
 	os_memcpy(&length, data, 2); // little endian
 
 	// entire message available in buffer?
-	if(length <= len)
+	if(length+2 <= len) // 4-feb-2015 added +2 here
 	{
-		return length; // 2-12-2015 commented: + 2; // +2 because ALL_LENGTH field of CTRL protocol is 2 bytes long
+		return length;
 	}
 
 	return 0;
@@ -191,7 +191,10 @@ static void ICACHE_FLASH_ATTR ctrl_stack_process_message(tCtrlMessage *msg)
 // data expecter timeout, in case it triggers things aren't going well
 static void ICACHE_FLASH_ATTR data_expecter_timeout(void *arg)
 {
-	uart0_sendStr("data_expecter_timeout() - FLUSH RX BUFF\r\n");
+	#ifdef CTRL_LOGGING
+		uart0_sendStr("data_expecter_timeout() - FLUSH RX BUFF\r\n");
+	#endif
+
 	if(rxBuff != NULL)
 	{
 		os_free(rxBuff);
@@ -209,12 +212,24 @@ void ICACHE_FLASH_ATTR ctrl_stack_recv(char *data, unsigned short len)
 
 	if(rxBuff == NULL)
 	{
+		/*#ifdef CTRL_LOGGING
+			char tmp[80];
+			os_sprintf(tmp, "ctrl_stack_recv, fresh: (%d)\r\n", (len));
+			uart0_sendStr(tmp);
+		#endif*/
+
 		// fresh data arrived
 		rxBuff = data;
 		rxBuffLen = len;
 	}
 	else
 	{
+		/*#ifdef CTRL_LOGGING
+			char tmp[80];
+			os_sprintf(tmp, "ctrl_stack_recv, concat: (%d)\r\n", (len));
+			uart0_sendStr(tmp);
+		#endif*/
+
 		// concatenate
 		shouldFree = 1;
 		char *newRxBuff = (char *)os_malloc(rxBuffLen+len);
@@ -226,16 +241,26 @@ void ICACHE_FLASH_ATTR ctrl_stack_recv(char *data, unsigned short len)
 		rxBuffLen = rxBuffLen+len;
 	}
 
+	/*#ifdef CTRL_LOGGING
+	{
+		char tmp[80];
+		os_sprintf(tmp, "ctrl_stack_recv, total rxBuffLen: (%d)\r\n", rxBuffLen);
+		uart0_sendStr(tmp);
+	}
+	#endif*/
+
 	// process data we have in rxBuff buffer
 	unsigned short processedLen = 0;
-	while(processedLen < rxBuffLen)
+	while(rxBuffLen > 0)
 	{
-		unsigned short allLength = ctrl_find_message(rxBuff+processedLen, rxBuffLen-processedLen);
+		unsigned short allLength = ctrl_find_message(rxBuff+processedLen, rxBuffLen);
 
 		/*#ifdef CTRL_LOGGING
+		{
 			char tmp[80];
 			os_sprintf(tmp, "ctrl_find_message, allLength: (%d)\r\n", (allLength));
 			uart0_sendStr(tmp);
+		}
 		#endif*/
 
 		if(allLength > 0)
@@ -243,7 +268,7 @@ void ICACHE_FLASH_ATTR ctrl_stack_recv(char *data, unsigned short len)
 			// entire message found in buffer, lets process it
 			os_timer_disarm(&tmrDataExpecter);
 
-			// messages must come in 16 byte blocks (minus the first two bytes for [ALL_LENGTH]). ctrl_find_message() doesn't include ALL_LENGTH in result
+			// messages must come in 16 byte blocks (minus the first two bytes for [ALL_LENGTH]). ctrl_find_message() doesn't include ALL_LENGTH field in result
 			if(!(allLength % 16))
 			{
 				// Packet structure:
@@ -252,30 +277,11 @@ void ICACHE_FLASH_ATTR ctrl_stack_recv(char *data, unsigned short len)
 
 				char *msgPtr = rxBuff+processedLen+2; // skip the ALL_LENGTH field
 
-				/*#ifdef CTRL_LOGGING
-					char tmp[80];
-					os_sprintf(tmp, "unpacking %d bytes:", allLength);
-					uart0_sendStr(tmp);
-
-					unsigned short i;
-					for(i=0; i<(allLength); i++)
-					{
-						char tmp2[10];
-						os_sprintf(tmp2, " 0x%X", msgPtr[i]);
-						uart0_sendStr(tmp2);
-					}
-					uart0_sendStr(".\r\n");
-				#endif*/
-
 				// Verify CMAC
 				char calculatedCmac[16];
 				cmac_generate(aes128Key, msgPtr, allLength-16, calculatedCmac);
 				if(os_strncmp(calculatedCmac, msgPtr+allLength-16, 16) == 0)
 				{
-					/*#ifdef CTRL_LOGGING
-						uart0_sendStr("CMAC VERIFIED!\r\n");
-					#endif*/
-
 					// Decrypt
 					aes128_cbc_decrypt(msgPtr, allLength-16, aes128Key);
 
@@ -304,56 +310,61 @@ void ICACHE_FLASH_ATTR ctrl_stack_recv(char *data, unsigned short len)
 					// Process
 					ctrl_stack_process_message(&msg);
 				}
-				/*#ifdef CTRL_LOGGING
-				else
-				{
-					uart0_sendStr("CMAC NOT VERIFIED!\r\n");
-				}
-				#endif*/
 			}
+
+			processedLen += allLength+2;
+			rxBuffLen -= allLength+2;
+
 			/*#ifdef CTRL_LOGGING
-			else
 			{
 				char tmp[80];
-				os_sprintf(tmp, "error, packet (%d) is not in 16 byte blocks!\r\n", allLength);
+				os_sprintf(tmp, "processed message, processedLen=(%d), rxBuffLen=(%d)\r\n", processedLen, rxBuffLen);
 				uart0_sendStr(tmp);
 			}
 			#endif*/
-
-			processedLen += allLength+2;
-			rxBuffLen = rxBuffLen-processedLen;
 		}
 		else
 		{
-			// has remaining data in buffer (beginning of another message but not entire message)
-			if(rxBuffLen-processedLen > 0)
+			// has remaining data in buffer (beginning of another message but not entire message)?
+			if(rxBuffLen > 0)
 			{
 				/*#ifdef CTRL_LOGGING
+				{
 					char tmp[80];
-					os_sprintf(tmp, "stack has remaining data in buffer (%d)\r\n", (rxBuffLen-processedLen));
+					os_sprintf(tmp, "stack has remaining data in buffer (%d)\r\n", rxBuffLen);
 					uart0_sendStr(tmp);
+				}
 				#endif*/
 
 				os_timer_disarm(&tmrDataExpecter);
 				os_timer_arm(&tmrDataExpecter, TMR_DATA_EXPECTER_MS, 0); // 0 = do not repeat automatically
 
-				char *newRxBuff = (char *)os_malloc(rxBuffLen-processedLen);
-				os_memcpy(newRxBuff, rxBuff+processedLen, rxBuffLen-processedLen);
+				char *newRxBuff = (char *)os_malloc(rxBuffLen);
+				os_memcpy(newRxBuff, rxBuff+processedLen, rxBuffLen);
 				if(shouldFree)
 				{
 					os_free(rxBuff);
 				}
 
 				rxBuff = newRxBuff;
-				rxBuffLen = rxBuffLen-processedLen;
 			}
+
+			/*#ifdef CTRL_LOGGING
+			{
+				char tmp[100];
+				os_sprintf(tmp, "full message not found, processedLen=(%d), rxBuffLen=(%d), break out!\r\n", processedLen, rxBuffLen);
+				uart0_sendStr(tmp);
+			}
+			#endif*/
+
 			break;
 		}
 	}
 
 	if(rxBuffLen == 0)
 	{
-		//os_timer_disarm(&tmrDataExpecter); // TODO: see if required here as well?
+		os_timer_disarm(&tmrDataExpecter); // TODO: see if required here as well?
+
 		if(shouldFree)
 		{
 			os_free(rxBuff);
