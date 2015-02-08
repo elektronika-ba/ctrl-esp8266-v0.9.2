@@ -26,7 +26,7 @@ typedef struct {
 #define CH_OUT_OF_SYNC 		0x08
 #define CH_NOTIFICATION 	0x10
 #define CH_SYSTEM_MESSAGE 	0x20
-#define CH_BACKOFF 			0x40
+#define CH_BACKOFF 			0x40 // dual meaning, if sent from Base->Server it means that Server should Backoff. If sent from Server->Base it means that Server has backed off (so it is a confirmation of backoff).
 #define CH_SAVE_TXSERVER	0x80
 
 // private

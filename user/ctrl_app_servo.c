@@ -58,7 +58,13 @@ static unsigned char ICACHE_FLASH_ATTR ctrl_app_message_received(tCtrlMessage *m
 	os_sprintf(tmp2, "UNPACKED %u [ms]\r\n", servoDuration);
 	uart0_sendStr(tmp2);
 
-	return 0; // lets say everything is OK and we don't need the Server to backoff next message (and resend this one too)
+	// lets send back the data we received to all Clients listening to this Base. Send it as notification if we received this task as a notification
+	if(ctrl_platform_send(dur, msg->length-1-4, (msg->header & CH_NOTIFICATION)))
+	{
+		uart0_sendStr("> Failed to send back the data!\r\n");
+	}
+
+	return 0; // lets say everything is OK and we don't need the Server to backoff next message
 }
 
 // entry point to the temperature logger app

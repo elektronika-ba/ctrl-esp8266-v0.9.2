@@ -20,6 +20,22 @@ static unsigned char authPhase;
 static unsigned char authSync;
 static tCtrlCallbacks *ctrlCallbacks;
 static unsigned char backoff;
+
+// About safeToUnBackoff: when Server receives our BACKOFF ACK, it will send a special ACK to that request so that we
+// can safely mark that it is safe to unbackoff. Imagine that Server sent us lets say 100 messages, and they are traveling
+// through the wire. Base receives first one, processes it and decides that Server needs to backoff. Ok, it sets backoff=1
+// which will be sent to Server in ACK for message number 2. Server receives that ACK and says OK (remember those 98
+// remaining messages are still traveling and arriving to Base). Now we (Base) need to reject all those 98 messages and ACK
+// to each one with BACKOFF (it MUST!). Now, what happens if we (Base) decides that it now wants to receive further messages
+// and that happens on for example 58th message which is on the wire. We would start receiving messages from 58 to the end
+// but we would find ourself in OUT OF SYNC with server, since we are now missing those messages from 2 to 57! That's why we
+// need to get ServerBackedOff message from Server because it would arrive after the 100th message (after the last one we need
+// to let pass by) and only then we can unset the backoff. How do we know that it will arrive here after 100th message? - simple,
+// TCP/IP protocol guaranties that! We will actually get 98 of those BACKOFF ACKs but it shouldn't be a problem for us. Server will
+// keep trying to re-send all those messages after backoff expires. Naturally, backoff delay will be huge after 100 backed-off
+// messages but there is nothing we can do about it.
+static unsigned char safeToUnBackoff = 1;
+
 static char *aes128Key; // secret key
 static char random16bytes[16]; // IV for encryption
 
@@ -57,7 +73,7 @@ static void ICACHE_FLASH_ATTR ctrl_stack_process_message(tCtrlMessage *msg)
 			unsigned char i = 0;
 			for(i=0; i<4; i++)
 			{
-				unsigned long r = system_get_time() + rand(); // TODO: make better random generation here? system_get_time() will probably have only one value in this loop...
+				unsigned long r = system_get_time() + rand(); // TODO: make better random generation here. system_get_time() will probably have only one value in this loop... Idea: ESP8266 has SSL/TLS so it must have a good random number generator. It would be nice to have access to it!
 				os_memcpy(challResponse+(i*4), &r, 4);
 			}
 			os_memcpy(challResponse+16, msg->data, 16);
@@ -105,10 +121,18 @@ static void ICACHE_FLASH_ATTR ctrl_stack_process_message(tCtrlMessage *msg)
 		// we received an ACK?
 		if((msg->header) & CH_ACK)
 		{
-			// push the received ack to callback
-			if(ctrlCallbacks->message_acked != NULL)
+			// if Server has set CH_BACKOFF, it means that it is confirming our BackOff command, and that it is now safe to unBackOff
+			if((msg->header) & CH_BACKOFF)
 			{
-				ctrlCallbacks->message_acked(msg);
+				safeToUnBackoff = 1;
+			}
+			else
+			{
+				// push the received ack to callback
+				if(ctrlCallbacks->message_acked != NULL)
+				{
+					ctrlCallbacks->message_acked(msg);
+				}
 			}
 		}
 		// fresh message, acknowledge and push it to the app
@@ -149,6 +173,11 @@ static void ICACHE_FLASH_ATTR ctrl_stack_process_message(tCtrlMessage *msg)
                 {
                 	ack.header |= CH_PROCESSED;
                 	TXserver++; // next package we will receive must be +1 of current value, so lets ++
+
+					// Important note: We shouldn't save TXserver if we are telling Server to backoff,
+					// but since Server will not store our TXserver value if we are backing off, we can
+					// safelly always send it to Server knowing it will only be saved if we are not
+					// backing him off :)
 
 					// Server offers us a feature to store a copy of this TXserver on his side so that
 					// we don't wear out our Flash or EEPROM memory, lets do that! Thanks Server :)
@@ -533,6 +562,9 @@ static unsigned char ICACHE_FLASH_ATTR ctrl_stack_send_msg(tCtrlMessage *msg)
 // this sets or clears the backoff!
 void ICACHE_FLASH_ATTR ctrl_stack_backoff(unsigned char backoff_)
 {
+	if(!safeToUnBackoff && !backoff_) return; // prevend unbackingoff if it is not safe
+	if(backoff_) safeToUnBackoff = 0; // say it is not safe to unbackoff if we just backedoff server
+
 	backoff = backoff_;
 }
 
